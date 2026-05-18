@@ -7,10 +7,10 @@ export function useSignaling() {
   const [connected, setConnected] = useState(false)
 
   useEffect(() => {
-    // 优先用环境变量，否则用当前页面 origin（明确传值比 io() 无参更可靠）
-    const socketUrl =
-      process.env.NEXT_PUBLIC_SOCKET_URL ||
-      (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000')
+    // Socket.IO 服务器与前端同源部署，必须连到当前页面 origin。
+    // 不再使用 NEXT_PUBLIC_SOCKET_URL —— 一旦配错（如域名带随机后缀）
+    // 客户端会连到不存在的域名并被 CORS 拦截。
+    const socketUrl = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000'
 
     const socket = io(socketUrl, {
       transports: ['polling', 'websocket'],
