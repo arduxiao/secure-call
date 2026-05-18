@@ -18,13 +18,20 @@ app.prepare().then(() => {
     cors: {
       origin: process.env.CLIENT_ORIGIN || '*',
       methods: ['GET', 'POST']
-    }
+    },
+    // 允许跨域携带凭证
+    allowEIO3: true,
   })
 
   registerSignalingHandlers(io)
+  console.log('[server] Socket.IO signaling handlers registered')
 
   const port = parseInt(process.env.PORT || '3000', 10)
-  httpServer.listen(port, () => {
-    console.log(`Ready on http://localhost:${port}`)
+  httpServer.listen(port, '0.0.0.0', () => {
+    console.log(`[server] Ready on http://0.0.0.0:${port}`)
+    console.log(`[server] NODE_ENV=${process.env.NODE_ENV}`)
   })
+}).catch((err) => {
+  console.error('[server] Failed to start:', err)
+  process.exit(1)
 })
