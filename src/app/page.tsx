@@ -30,6 +30,8 @@ export default function HomePage() {
   const sharedKeyRef = useRef<Uint8Array | null>(null)
   const roomIdRef = useRef('')
   const isInitiatorRef = useRef(false)
+  // 同步可读的 callMode，避免 setCallMode 异步导致 offer 处理器读到旧值
+  const callModeRef = useRef<CallMode>('audio')
 
   const ICE_SERVERS: RTCIceServer[] = [
     { urls: 'stun:stun.l.google.com:19302' },
@@ -105,6 +107,7 @@ export default function HomePage() {
       sharedKeyRef.current = shared
 
       const resolvedMode: CallMode = remoteMode === 'video' ? 'video' : 'audio'
+      callModeRef.current = resolvedMode
       setCallMode(resolvedMode)
 
       const pc = setupPeerConnection()
@@ -136,23 +139,26 @@ export default function HomePage() {
         const offerStr = decrypt(encryptedSdp, sharedKeyRef.current)
         const offerData = JSON.parse(offerStr)
 
-        const mode = callMode === 'video' ? { audio: true, video: true } : { audio: true, video: false }
-        const stream = await navigator.mediaDevices.getUserMedia(mode)
+        // 先 setRemoteDescription（Unified Plan 推荐顺序：先建好 transceivers）
+        await pc.setRemoteDescription(new RTCSessionDescription(offerData))
+
+        // 用 ref 读取 callMode，避免闭包捕获旧 state
+        const wantVideo = callModeRef.current === 'video'
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: wantVideo })
         setLocalStream(stream)
         stream.getTracks().forEach(track => pc.addTrack(track, stream))
 
-        await pc.setRemoteDescription(new RTCSessionDescription(offerData))
         const answer = await pc.createAnswer()
         await pc.setLocalDescription(answer)
         const encrypted = encrypt(JSON.stringify({ type: answer.type, sdp: answer.sdp }), sharedKeyRef.current)
         emit('relay-answer', { roomId: roomIdRef.current, sdp: encrypted })
       } catch (e) {
-        console.error('[webrtc] answer error')
+        console.error('[webrtc] answer error', e)
         resetToHome()
       }
     })
     return () => off()
-  }, [on, setupPeerConnection, emit, callMode, resetToHome])
+  }, [on, setupPeerConnection, emit, resetToHome])
 
   // Listen for answer
   useEffect(() => {
@@ -250,6 +256,8 @@ export default function HomePage() {
   }, [crypto, on, emit])
 
   const handleAccept = useCallback(async (mode: CallMode) => {
+    // 先同步设置 ref，再异步更新 state——保证 offer 到达时能读到正确模式
+    callModeRef.current = mode
     setCallMode(mode)
     isInitiatorRef.current = false
     const pubKey = crypto.publicKeyB64.current
