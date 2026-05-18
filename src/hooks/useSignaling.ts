@@ -1,20 +1,27 @@
 'use client'
-import { useEffect, useRef, useCallback } from 'react'
+import { useEffect, useRef, useCallback, useState } from 'react'
 import { io, Socket } from 'socket.io-client'
 
 export function useSignaling() {
   const socketRef = useRef<Socket | null>(null)
+  const [connected, setConnected] = useState(false)
 
   useEffect(() => {
-    const socketUrl = process.env.NEXT_PUBLIC_SOCKET_URL || ''
-    const socket = io(socketUrl, {
-      transports: ['websocket', 'polling'],
-    })
+    // 空字符串传给 io() 行为不可靠，用 undefined 让它连当前 origin
+    const socketUrl = process.env.NEXT_PUBLIC_SOCKET_URL || undefined
+    const socket = socketUrl
+      ? io(socketUrl, { transports: ['websocket', 'polling'] })
+      : io({ transports: ['websocket', 'polling'] })
+
     socketRef.current = socket
+
+    socket.on('connect', () => setConnected(true))
+    socket.on('disconnect', () => setConnected(false))
 
     return () => {
       socket.disconnect()
       socketRef.current = null
+      setConnected(false)
     }
   }, [])
 
@@ -37,5 +44,5 @@ export function useSignaling() {
     }
   }, [])
 
-  return { emit, on, off, socket: socketRef }
+  return { emit, on, off, socket: socketRef, connected }
 }

@@ -24,7 +24,7 @@ export default function HomePage() {
   const [localStream, setLocalStream] = useState<MediaStream | null>(null)
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null)
 
-  const { emit, on, socket } = useSignaling()
+  const { emit, on, socket, connected } = useSignaling()
   const crypto = useCrypto()
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null)
   const sharedKeyRef = useRef<Uint8Array | null>(null)
@@ -222,18 +222,29 @@ export default function HomePage() {
 
     crypto.generateKeys()
 
-    const off = on('room-info', ({ symbols, pubKeyA }: any) => {
+    const offInfo = on('room-info', ({ symbols, pubKeyA }: any) => {
+      clearTimeout(timer)
       const shared = crypto.deriveSharedKey(pubKeyA)
       sharedKeyRef.current = shared
       setJoinedSymbol(symbols)
       setJoinStatus('found')
-      off()
+      offInfo()
+      offNotFound()
     })
 
     const offNotFound = on('room-not-found', () => {
+      clearTimeout(timer)
       setJoinStatus('not-found')
+      offInfo()
       offNotFound()
     })
+
+    // 5 秒无响应视为失败（Socket.IO 未连接或房间不存在）
+    const timer = setTimeout(() => {
+      offInfo()
+      offNotFound()
+      setJoinStatus('not-found')
+    }, 5000)
 
     emit('lookup-room', { roomId: code })
   }, [crypto, on, emit])
@@ -282,6 +293,7 @@ export default function HomePage() {
               <InvitePanel
                 onInvite={handleInvite}
                 onJoinMode={() => setView('join')}
+                connected={connected}
               />
             </div>
           )}
@@ -308,6 +320,7 @@ export default function HomePage() {
               onBack={() => { setView('home'); setJoinStatus('idle'); setJoinedSymbol(null) }}
               symbolString={joinedSymbol}
               status={joinStatus}
+              connected={connected}
             />
           )}
 

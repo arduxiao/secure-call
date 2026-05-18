@@ -9,9 +9,10 @@ import { generateRoomCode } from '@/lib/roomCode'
 interface InvitePanelProps {
   onInvite: (roomId: string, symbolString: string) => void
   onJoinMode: () => void
+  connected: boolean
 }
 
-export function InvitePanel({ onInvite, onJoinMode }: InvitePanelProps) {
+export function InvitePanel({ onInvite, onJoinMode, connected }: InvitePanelProps) {
   const [symbols, setSymbols] = useState<SymbolSelection>({
     shape: '△',
     color: '🟢',
@@ -35,7 +36,11 @@ export function InvitePanel({ onInvite, onJoinMode }: InvitePanelProps) {
         </CardContent>
       </Card>
 
-      <Button onClick={handleInvite} className="w-full" size="lg">
+      {!connected && (
+        <p className="text-xs text-amber-500 text-center animate-pulse">正在连接服务器…</p>
+      )}
+
+      <Button onClick={handleInvite} className="w-full" size="lg" disabled={!connected}>
         发起邀请
       </Button>
 

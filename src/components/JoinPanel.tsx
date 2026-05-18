@@ -12,6 +12,7 @@ interface JoinPanelProps {
   onBack: () => void
   symbolString: string | null
   status: 'idle' | 'looking' | 'found' | 'not-found'
+  connected: boolean
 }
 
 export function JoinPanel({
@@ -22,6 +23,7 @@ export function JoinPanel({
   onBack,
   symbolString,
   status,
+  connected,
 }: JoinPanelProps) {
   const [roomId, setRoomId] = useState('')
 
@@ -33,6 +35,10 @@ export function JoinPanel({
 
   return (
     <div className="space-y-6">
+      {!connected && (
+        <p className="text-xs text-amber-500 text-center animate-pulse">正在连接服务器…</p>
+      )}
+
       <div className="space-y-3">
         <div className="flex gap-2">
           <Input
@@ -42,9 +48,13 @@ export function JoinPanel({
             onKeyDown={e => e.key === 'Enter' && handleLookup()}
             className="font-mono tracking-widest text-center text-lg"
             maxLength={8}
+            disabled={status === 'looking'}
           />
-          <Button onClick={handleLookup} disabled={roomId.length < 6}>
-            查询
+          <Button
+            onClick={handleLookup}
+            disabled={roomId.length < 6 || status === 'looking' || !connected}
+          >
+            {status === 'looking' ? '查询中…' : '查询'}
           </Button>
         </div>
 
