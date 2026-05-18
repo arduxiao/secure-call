@@ -2,6 +2,9 @@
   "name": "secure-call",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=20.0.0 <21"
+  },
   "scripts": {
     "dev": "tsx server.ts",
     "build": "next build",

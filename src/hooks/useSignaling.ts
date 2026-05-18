@@ -7,13 +7,16 @@ export function useSignaling() {
   const [connected, setConnected] = useState(false)
 
   useEffect(() => {
-    const socketUrl = process.env.NEXT_PUBLIC_SOCKET_URL || undefined
+    // 优先用环境变量，否则用当前页面 origin（明确传值比 io() 无参更可靠）
+    const socketUrl =
+      process.env.NEXT_PUBLIC_SOCKET_URL ||
+      (typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000')
 
-    // 先走 polling 建连，成功后自动升级到 WebSocket
-    // 这样能绕过部分网络对 WebSocket upgrade 的限制
-    const socket = socketUrl
-      ? io(socketUrl, { transports: ['polling', 'websocket'] })
-      : io({ transports: ['polling', 'websocket'] })
+    const socket = io(socketUrl, {
+      transports: ['polling', 'websocket'],
+      reconnectionAttempts: 10,
+      reconnectionDelay: 1000,
+    })
 
     socketRef.current = socket
 
