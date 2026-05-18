@@ -7,16 +7,21 @@ export function useSignaling() {
   const [connected, setConnected] = useState(false)
 
   useEffect(() => {
-    // 空字符串传给 io() 行为不可靠，用 undefined 让它连当前 origin
     const socketUrl = process.env.NEXT_PUBLIC_SOCKET_URL || undefined
+
+    // 先走 polling 建连，成功后自动升级到 WebSocket
+    // 这样能绕过部分网络对 WebSocket upgrade 的限制
     const socket = socketUrl
-      ? io(socketUrl, { transports: ['websocket', 'polling'] })
-      : io({ transports: ['websocket', 'polling'] })
+      ? io(socketUrl, { transports: ['polling', 'websocket'] })
+      : io({ transports: ['polling', 'websocket'] })
 
     socketRef.current = socket
 
     socket.on('connect', () => setConnected(true))
     socket.on('disconnect', () => setConnected(false))
+    socket.on('connect_error', (err) => {
+      console.error('[signaling] connect error:', err.message)
+    })
 
     return () => {
       socket.disconnect()
@@ -26,7 +31,9 @@ export function useSignaling() {
   }, [])
 
   const emit = useCallback((event: string, data?: unknown) => {
-    socketRef.current?.emit(event, data)
+    if (socketRef.current?.connected) {
+      socketRef.current.emit(event, data)
+    }
   }, [])
 
   const on = useCallback((event: string, handler: (...args: unknown[]) => void) => {

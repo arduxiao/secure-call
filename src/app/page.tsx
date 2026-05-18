@@ -288,7 +288,13 @@ export default function HomePage() {
             <div className="space-y-6">
               <div className="text-center space-y-1">
                 <h1 className="text-xl font-semibold">安全通话</h1>
-                <p className="text-sm text-muted-foreground">暗语标志身份确认 · 零痕迹</p>
+                <p className="text-sm text-muted-foreground">端对端加密 · 暗语标志身份确认 · 零痕迹</p>
+              </div>
+              <div className="text-xs text-muted-foreground bg-muted/40 rounded-lg px-4 py-3 space-y-1">
+                <p className="font-medium text-foreground mb-1">使用流程</p>
+                <p>① 发起方：选好暗语标志（颜色/形状/数量含义事先与对方约好）→ 发起邀请</p>
+                <p>② 发起方：把 8 位房间码发给对方</p>
+                <p>③ 接受方：点「加入通话」→ 输入房间码 → 识别标志 → 接听</p>
               </div>
               <InvitePanel
                 onInvite={handleInvite}

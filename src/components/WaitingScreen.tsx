@@ -1,4 +1,5 @@
 'use client'
+import { useState } from 'react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 
@@ -9,8 +10,24 @@ interface WaitingScreenProps {
 }
 
 export function WaitingScreen({ roomId, symbolString, onCancel }: WaitingScreenProps) {
-  const copyRoomId = () => {
-    navigator.clipboard.writeText(roomId)
+  const [copied, setCopied] = useState(false)
+
+  const copyRoomId = async () => {
+    try {
+      await navigator.clipboard.writeText(roomId)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch {
+      // fallback for browsers that block clipboard API
+      const el = document.createElement('textarea')
+      el.value = roomId
+      document.body.appendChild(el)
+      el.select()
+      document.execCommand('copy')
+      document.body.removeChild(el)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    }
   }
 
   return (
@@ -27,19 +44,22 @@ export function WaitingScreen({ roomId, symbolString, onCancel }: WaitingScreenP
       <Card>
         <CardContent className="pt-6 space-y-4">
           <div>
-            <p className="text-xs text-muted-foreground mb-2">房间码（发送给对方）</p>
+            <p className="text-xs text-muted-foreground mb-2">房间码（点击复制后发给对方）</p>
             <button
               onClick={copyRoomId}
               className="w-full font-mono text-2xl tracking-[0.3em] text-center py-3 bg-muted rounded-lg hover:bg-muted/80 transition-colors"
             >
               {roomId}
             </button>
-            <p className="text-xs text-muted-foreground text-center mt-1">点击复制</p>
+            <p className={`text-xs text-center mt-1 transition-colors ${copied ? 'text-green-500' : 'text-muted-foreground'}`}>
+              {copied ? '✓ 已复制' : '点击复制'}
+            </p>
           </div>
 
           <div>
-            <p className="text-xs text-muted-foreground mb-2">当前暗语标志</p>
+            <p className="text-xs text-muted-foreground mb-1">你选择的暗语标志</p>
             <div className="text-4xl text-center py-2">{symbolString}</div>
+            <p className="text-xs text-muted-foreground text-center">对方输入房间码后会看到此标志，请确保对方事先知晓含义</p>
           </div>
         </CardContent>
       </Card>

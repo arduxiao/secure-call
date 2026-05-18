@@ -28,48 +28,67 @@ export function JoinPanel({
   const [roomId, setRoomId] = useState('')
 
   const handleLookup = () => {
-    if (roomId.trim().length >= 6) {
-      onLookup(roomId.trim().toUpperCase())
-    }
+    const code = roomId.trim().toUpperCase()
+    if (code.length >= 6) onLookup(code)
   }
 
   return (
-    <div className="space-y-6">
-      {!connected && (
-        <p className="text-xs text-amber-500 text-center animate-pulse">正在连接服务器…</p>
+    <div className="space-y-5">
+
+      {/* 连接状态 */}
+      <div className="flex items-center justify-center gap-2 text-xs">
+        <span className={`w-2 h-2 rounded-full flex-shrink-0 ${connected ? 'bg-green-500' : 'bg-amber-500 animate-pulse'}`} />
+        <span className="text-muted-foreground">
+          {connected ? '已连接到服务器' : '正在连接服务器，请稍候…'}
+        </span>
+      </div>
+
+      {/* 步骤说明 */}
+      {status !== 'found' && (
+        <div className="text-xs text-muted-foreground bg-muted/40 rounded-lg px-4 py-3 space-y-1">
+          <p>① 从发起方处获取 <span className="text-foreground font-medium">8 位房间码</span></p>
+          <p>② 双方事先约好<span className="text-foreground font-medium">暗语标志的含义</span>（在发起邀请前选择）</p>
+          <p>③ 输入房间码查询，识别标志后决定是否接听</p>
+        </div>
       )}
 
-      <div className="space-y-3">
+      {/* 输入框 */}
+      <div className="space-y-2">
         <div className="flex gap-2">
           <Input
-            placeholder="输入房间码"
+            placeholder="输入 8 位房间码"
             value={roomId}
             onChange={e => setRoomId(e.target.value.toUpperCase())}
             onKeyDown={e => e.key === 'Enter' && handleLookup()}
             className="font-mono tracking-widest text-center text-lg"
             maxLength={8}
-            disabled={status === 'looking'}
+            disabled={status === 'looking' || status === 'found'}
           />
           <Button
             onClick={handleLookup}
-            disabled={roomId.length < 6 || status === 'looking' || !connected}
+            disabled={roomId.length < 6 || status === 'looking' || status === 'found' || !connected}
           >
             {status === 'looking' ? '查询中…' : '查询'}
           </Button>
         </div>
 
         {status === 'not-found' && (
-          <p className="text-sm text-destructive text-center">房间不存在或已过期</p>
+          <p className="text-sm text-destructive text-center">
+            房间不存在或已过期，请确认房间码正确
+          </p>
         )}
       </div>
 
+      {/* 查询到标志后显示 */}
       {status === 'found' && symbolString && (
         <Card className="border-primary/50">
           <CardContent className="pt-6 space-y-6">
             <div className="text-center space-y-2">
               <p className="text-xs text-muted-foreground uppercase tracking-widest">对方的暗语标志</p>
               <div className="text-6xl py-4">{symbolString}</div>
-              <p className="text-sm text-muted-foreground">根据约定识别此标志后决定是否接听</p>
+              <p className="text-sm text-muted-foreground">
+                根据你们事先的约定识别此标志，再决定是否接听
+              </p>
             </div>
 
             <div className="grid grid-cols-3 gap-2">
