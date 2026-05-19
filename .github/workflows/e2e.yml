@@ -37,8 +37,10 @@ jobs:
 
       - name: Start dev server
         # Dev mode matches what the e2e tests are validated against locally; HMR is harmless to the tests.
+        # MAX_ROOMS=20 deliberately lowered so the adversarial test's capacity scenario actually fires.
+        # All other tests create ≤ 2 rooms each so 20 is plenty of headroom.
         run: |
-          PORT=3000 npm run dev > /tmp/server.log 2>&1 &
+          MAX_ROOMS=20 PORT=3000 npm run dev > /tmp/server.log 2>&1 &
           echo $! > /tmp/server.pid
 
       - name: Wait for server
@@ -70,7 +72,9 @@ jobs:
         run: npm run test:e2e:sas
 
       - name: Run adversarial server test
-        run: npm run test:e2e:adv
+        # Pass MAX_ROOMS to the test process so it knows the dev server's cap and
+        # can exercise the capacity scenario; without this env it skips that case.
+        run: MAX_ROOMS=20 npm run test:e2e:adv
 
       - name: Stop server
         if: always()

@@ -50,7 +50,6 @@ const SECURITY_HEADERS = [
 ]
 
 const nextConfig: NextConfig = {
-  turbopack: {},
   async headers() {
     return [{ source: '/:path*', headers: SECURITY_HEADERS }]
   },

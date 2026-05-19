@@ -14,7 +14,7 @@ const PUBKEY_BYTES = 32               // X25519 raw public key length
 const MAX_SDP_LEN = 64 * 1024         // 64 KB encrypted SDP (full audio+video SDP is ~3-5KB plaintext)
 const MAX_ICE_LEN = 4 * 1024          // 4 KB encrypted ICE candidate
 const MAX_RELAY_TOTAL_BYTES = MAX_SDP_LEN * 4  // hard ceiling across one call
-const MAX_ROOMS = 5000                // global cap on concurrent rooms — defends against memory growth
+const MAX_ROOMS = Math.max(1, parseInt(process.env.MAX_ROOMS || '5000', 10))  // global cap on concurrent rooms — defends against memory growth. Env override for tests.
 
 // Crockford-ish base32 — must mirror src/lib/roomCode.ts ROOM_CODE_ALPHABET.
 const ROOMID_RE = /^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{8}$/

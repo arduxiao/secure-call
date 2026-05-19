@@ -4,7 +4,12 @@ import { io, Socket } from 'socket.io-client'
 import type { ServerEvents } from '@/lib/protocol'
 
 type ServerEventName = keyof ServerEvents
-type Handler<K extends ServerEventName> = (payload: ServerEvents[K]) => void
+// Void-payload events should accept () => void handlers instead of forcing
+// callers to write (payload: void) => void.
+type Handler<K extends ServerEventName> =
+  [ServerEvents[K]] extends [void]
+    ? () => void
+    : (payload: ServerEvents[K]) => void
 
 export function useSignaling() {
   const socketRef = useRef<Socket | null>(null)
@@ -49,20 +54,12 @@ export function useSignaling() {
 
   const on = useCallback(<K extends ServerEventName>(event: K, handler: Handler<K>) => {
     // socket.io's typings widen the handler to (...args: any[]); we narrow at the call site.
-    const wrapped = (payload: ServerEvents[K]) => handler(payload)
+    const wrapped = (payload: ServerEvents[K]) => (handler as (p: ServerEvents[K]) => void)(payload)
     socketRef.current?.on(event as string, wrapped as (...args: unknown[]) => void)
     return () => {
       socketRef.current?.off(event as string, wrapped as (...args: unknown[]) => void)
     }
   }, [])
 
-  const off = useCallback((event: string, handler?: (...args: unknown[]) => void) => {
-    if (handler) {
-      socketRef.current?.off(event, handler)
-    } else {
-      socketRef.current?.off(event)
-    }
-  }, [])
-
-  return { emit, on, off, connected }
+  return { emit, on, connected }
 }

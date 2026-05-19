@@ -144,16 +144,110 @@ async function scenarioBadSymbols() {
   else { log('S3-FAIL', `${rejected}/${cases.length} rejected`); process.exitCode = 1 }
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// S4 : global rooms cap — server refuses create-room past MAX_ROOMS
+// Gated by env: only meaningful when the dev server was started with a small
+// MAX_ROOMS (e.g. 20). Locally without the env var, this scenario is skipped.
+// ─────────────────────────────────────────────────────────────────────────
+async function scenarioCapacityCap() {
+  const cap = parseInt(process.env.MAX_ROOMS || '0', 10)
+  if (!cap || cap >= 100) {
+    log('S4-SKIP', `set MAX_ROOMS env on BOTH server and test (e.g. 20) to exercise capacity`)
+    return
+  }
+  log('S4', `MAX_ROOMS=${cap}; saturate then expect 'capacity' error on the next create`)
+  // Use one socket per room so per-IP create bucket doesn't bottleneck us.
+  // create bucket: capacity 5, refill 1/30s — but it's per-IP, all sockets share. So we
+  // burst until rate-limited, wait for refill, repeat. Simpler: open `cap+3` sockets
+  // and trickle create-room calls with 6-second gaps to stay under the bucket.
+  // For modest cap (~20) this finishes in ~2 minutes; acceptable for CI.
+  const sockets = []
+  let created = 0, capacityHit = 0
+  for (let i = 0; i < cap + 3; i++) {
+    const s = await connect()
+    sockets.push(s)
+    const verdict = await new Promise((resolve) => {
+      let done = false
+      const finish = (v) => { if (done) return; done = true; resolve(v) }
+      s.once('room-created', () => finish('CREATED'))
+      s.once('error', ({ message }) => finish(`error:${message}`))
+      s.once('rate-limited', ({ event }) => finish(`rate-limited:${event}`))
+      s.emit('create-room', { roomId: code(), symbols: '△ 🟢', pubKeyA: fakePub(i) })
+      setTimeout(() => finish('TIMEOUT'), 1500)
+    })
+    if (verdict === 'CREATED') created++
+    else if (verdict === 'error:capacity') capacityHit++
+    else if (verdict.startsWith('rate-limited:')) {
+      // Rate-limit hit — back off long enough to refill ONE token (~30s), then retry once.
+      await new Promise(r => setTimeout(r, 31_000))
+      const retry = await new Promise((resolve) => {
+        let done = false
+        const finish = (v) => { if (done) return; done = true; resolve(v) }
+        s.once('room-created', () => finish('CREATED'))
+        s.once('error', ({ message }) => finish(`error:${message}`))
+        s.emit('create-room', { roomId: code(), symbols: '△ 🟢', pubKeyA: fakePub(i + 1000) })
+        setTimeout(() => finish('TIMEOUT'), 1500)
+      })
+      if (retry === 'CREATED') created++
+      else if (retry === 'error:capacity') capacityHit++
+    }
+  }
+  sockets.forEach(s => s.disconnect())
+  log('S4', `created=${created}  capacity-rejected=${capacityHit}  cap=${cap}`)
+  if (created <= cap && capacityHit >= 1) log('S4-PASS', 'cap enforced')
+  else { log('S4-FAIL', `created=${created} > cap=${cap} OR capacityHit=${capacityHit} < 1`); process.exitCode = 1 }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// S5 : malformed pubKey rejected on both create-room and join-room
+// ─────────────────────────────────────────────────────────────────────────
+async function scenarioBadPubKey() {
+  log('S5', 'create-room with malformed pubKey → bad-pubkey')
+  // Shapes we expect the server to reject: wrong length, wrong alphabet,
+  // missing the required '=' padding, double padding (decodes to !=32 bytes).
+  const cases = [
+    { name: 'too short',         pubKey: Buffer.from(new Uint8Array(16)).toString('base64') },     // 16-byte payload
+    { name: 'too long',          pubKey: Buffer.from(new Uint8Array(64)).toString('base64') },     // 64-byte payload
+    { name: 'no padding',        pubKey: 'A'.repeat(44) },                                          // 44 chars, no '='
+    { name: 'illegal char',      pubKey: 'A'.repeat(42) + '*=' },                                   // contains '*'
+    { name: 'empty',             pubKey: '' },
+  ]
+  let rejected = 0
+  for (const c of cases) {
+    const s = await connect()
+    const got = await new Promise((resolve) => {
+      let done = false
+      const finish = (v) => { if (done) return; done = true; resolve(v) }
+      s.once('error', ({ message }) => finish(`error:${message}`))
+      s.once('rate-limited', ({ event }) => finish(`rate-limited:${event}`))
+      s.once('room-created', () => finish('CREATED'))
+      s.emit('create-room', { roomId: code(), symbols: '△ 🟢', pubKeyA: c.pubKey })
+      setTimeout(() => finish('TIMEOUT'), 500)
+    })
+    s.disconnect()
+    const ok = got === 'error:bad-pubkey'
+    if (ok) rejected++
+    log(`S5:case`, `${c.name.padEnd(18)} → ${got} ${ok ? '✓' : '✗'}`)
+  }
+  if (rejected === cases.length) log('S5-PASS', `all ${cases.length} malformed pubKeys rejected`)
+  else { log('S5-FAIL', `${rejected}/${cases.length} rejected`); process.exitCode = 1 }
+}
+
 async function run() {
   await scenarioForgedAnswer()
   await scenarioPerIPLimit()
-  // S3 talks to a fresh socket each iteration — rate-limit reset matters; insert a small pause
-  // after the burst test so the create-room bucket has refilled enough for S3's 7 attempts.
+  // The create bucket might be drained by S3 (≤5 creates) but lookup bucket from S2 is
+  // independent — let things cool a moment, then proceed.
   await new Promise(r => setTimeout(r, 2500))
   await scenarioBadSymbols()
+  await new Promise(r => setTimeout(r, 1500))
+  await scenarioBadPubKey()
+  // S4 last because it intentionally fills the rooms map.
+  await scenarioCapacityCap()
 }
 
-const HARD_TIMEOUT_MS = 30_000
+// S4 can wait ~31s for rate-limit refill; the rest is fast. 120s is comfortable.
+const HARD_TIMEOUT_MS = 120_000
 const guard = setTimeout(() => { console.error(`FATAL hard timeout ${HARD_TIMEOUT_MS}ms`); process.exit(2) }, HARD_TIMEOUT_MS)
 run()
   .catch(e => { console.error('FATAL', e); process.exitCode = 1 })
