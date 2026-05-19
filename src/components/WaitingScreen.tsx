@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { generateRoomCode } from '@/lib/roomCode'
+import { generateRoomCode, ROOM_CODE_ALPHABET, ROOM_CODE_LEN, isValidRoomCode } from '@/lib/roomCode'
 
 interface WaitingScreenProps {
   roomId: string
@@ -12,7 +12,16 @@ interface WaitingScreenProps {
   onEditRoomId: (newRoomId: string) => void
 }
 
-const VALID_ROOM_RE = /^[A-Z0-9]{8}$/
+// Filter as the user types: only the generator's canonical alphabet (no I/L/O/0/1).
+const sanitizeRoomCode = (raw: string): string => {
+  const upper = raw.toUpperCase()
+  let out = ''
+  for (const ch of upper) {
+    if (ROOM_CODE_ALPHABET.includes(ch)) out += ch
+    if (out.length === ROOM_CODE_LEN) break
+  }
+  return out
+}
 
 export function WaitingScreen({ roomId, symbolString, onCancel, onEditRoomId }: WaitingScreenProps) {
   const [copied, setCopied] = useState(false)
@@ -55,9 +64,9 @@ export function WaitingScreen({ roomId, symbolString, onCancel, onEditRoomId }: 
   }
 
   const saveEdit = () => {
-    const next = draft.trim().toUpperCase()
-    if (!VALID_ROOM_RE.test(next)) {
-      setEditError('房间码必须是 8 位字母或数字')
+    const next = sanitizeRoomCode(draft)
+    if (!isValidRoomCode(next)) {
+      setEditError(`房间码必须是 ${ROOM_CODE_LEN} 位字母或数字（不含 I/L/O/0/1，避免读错）`)
       return
     }
     if (next === roomId) {
@@ -91,12 +100,12 @@ export function WaitingScreen({ roomId, symbolString, onCancel, onEditRoomId }: 
                 <Input
                   autoFocus
                   value={draft}
-                  onChange={(e) => setDraft(e.target.value.toUpperCase().slice(0, 8))}
+                  onChange={(e) => setDraft(sanitizeRoomCode(e.target.value))}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') saveEdit()
                     if (e.key === 'Escape') cancelEdit()
                   }}
-                  maxLength={8}
+                  maxLength={ROOM_CODE_LEN}
                   className="font-mono text-2xl tracking-[0.3em] text-center h-14"
                 />
                 {editError && (

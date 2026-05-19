@@ -105,6 +105,27 @@ async function main() {
   log('B', `click ${ACCEPT_BUTTON}`)
   await pageB.getByRole('button', { name: ACCEPT_BUTTON }).click()
 
+  // SAS verification step: both sides must confirm fingerprint match.
+  log('main', 'waiting for SAS fingerprint screen on both peers…')
+  await Promise.all([
+    pageA.getByText('核对身份与密钥').waitFor({ state: 'visible', timeout: 10_000 }),
+    pageB.getByText('核对身份与密钥').waitFor({ state: 'visible', timeout: 10_000 }),
+  ])
+  // Sanity: SAS must match across A and B (4 emoji span elements).
+  const sasOf = (page) => page.evaluate(() => {
+    return Array.from(document.querySelectorAll('[aria-label^="fingerprint-"]'))
+      .sort((a, b) => a.getAttribute('aria-label').localeCompare(b.getAttribute('aria-label')))
+      .map(el => el.textContent.trim())
+  })
+  const [sasA, sasB] = await Promise.all([sasOf(pageA), sasOf(pageB)])
+  log('main', `SAS A=${sasA.join('')}  B=${sasB.join('')}`)
+  if (sasA.length !== 4 || sasB.length !== 4 || sasA.join('') !== sasB.join('')) {
+    throw new Error(`SAS mismatch: A=${sasA.join('')} B=${sasB.join('')}`)
+  }
+  log('main', 'click ✓ 一致 on both peers')
+  await pageA.getByRole('button', { name: /与对方一致/ }).click()
+  await pageB.getByRole('button', { name: /与对方一致/ }).click()
+
   log('main', `waiting for both peers to enter the ${MODE} call view…`)
   const probeSrc = inCallProbe(MODE).toString()
   const waitInCall = (page) => page.waitForFunction(`(${probeSrc})()`, { timeout: 20_000 })

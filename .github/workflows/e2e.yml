@@ -66,6 +66,9 @@ jobs:
       - name: Run edit-room-id test
         run: npm run test:e2e:edit
 
+      - name: Run SAS verification test
+        run: npm run test:e2e:sas
+
       - name: Stop server
         if: always()
         run: |

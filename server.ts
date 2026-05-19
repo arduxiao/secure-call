@@ -21,9 +21,22 @@ app.prepare().then(() => {
     handle(req, res, parsedUrl)
   })
 
+  // Same-origin only: in production we set ALLOWED_ORIGIN to the deploy URL
+  // (e.g. https://secure-call-kn0h.onrender.com). Locally we allow http://localhost:*.
+  // A missing/wildcard config is rejected so prod can't accidentally re-open CORS.
+  const allowedOrigin = process.env.ALLOWED_ORIGIN
+  const corsOrigin = (origin: string | undefined, cb: (err: Error | null, allow?: boolean) => void) => {
+    if (!origin) return cb(null, true)  // same-origin or non-browser requests
+    if (allowedOrigin && origin === allowedOrigin) return cb(null, true)
+    if (dev && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return cb(null, true)
+    return cb(new Error(`Origin ${origin} not allowed`))
+  }
+
   const io = new SocketIOServer(httpServer, {
-    cors: { origin: '*', methods: ['GET', 'POST'] },
-    allowEIO3: true,
+    cors: { origin: corsOrigin, methods: ['GET', 'POST'], credentials: false },
+    // Cap message size to ~128KB. SDP+ICE encrypted blobs are far smaller; this is the
+    // outer Socket.IO frame limit, complementing the per-event caps in signaling.ts.
+    maxHttpBufferSize: 128 * 1024,
   })
 
   registerSignalingHandlers(io)

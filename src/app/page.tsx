@@ -7,15 +7,15 @@ import { CallScreen } from '@/components/CallScreen'
 import { useSignaling } from '@/hooks/useSignaling'
 import { useCrypto } from '@/hooks/useCrypto'
 import { encrypt, decrypt } from '@/lib/crypto'
+import { computeSAS } from '@/lib/sas'
+import type { CallMode } from '@/lib/protocol'
 import { Lock } from 'lucide-react'
 
-type View = 'home' | 'waiting' | 'join' | 'connecting' | 'call'
+type View = 'home' | 'waiting' | 'join' | 'verifying' | 'connecting' | 'call'
 type JoinStatus = 'idle' | 'looking' | 'found' | 'not-found'
-type CallMode = 'audio' | 'video'
 
 export default function HomePage() {
   const [view, setView] = useState<View>('home')
-  const [isInitiator, setIsInitiator] = useState(false)
   const [roomId, setRoomId] = useState('')
   const [symbolString, setSymbolString] = useState('')
   const [joinStatus, setJoinStatus] = useState<JoinStatus>('idle')
@@ -24,8 +24,14 @@ export default function HomePage() {
   const [localStream, setLocalStream] = useState<MediaStream | null>(null)
   const [remoteStream, setRemoteStream] = useState<MediaStream | null>(null)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  // SAS（Short Authentication String）双方人工对码状态
+  const [sasEmoji, setSasEmoji] = useState<string[] | null>(null)
+  const [localFingerprintOK, setLocalFingerprintOK] = useState(false)
+  const [peerFingerprintOK, setPeerFingerprintOK] = useState(false)
+  // 对端在 verifying 阶段需要核对的暗语（A 看到 B 的，B 看到 A 的）
+  const [peerSymbol, setPeerSymbol] = useState<string | null>(null)
 
-  const { emit, on, socket, connected } = useSignaling()
+  const { emit, on, connected } = useSignaling()
   const crypto = useCrypto()
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null)
   const sharedKeyRef = useRef<Uint8Array | null>(null)
@@ -57,6 +63,10 @@ export default function HomePage() {
     localStreamRef.current = null
     setLocalStream(null)
     setRemoteStream(null)
+    setSasEmoji(null)
+    setLocalFingerprintOK(false)
+    setPeerFingerprintOK(false)
+    setPeerSymbol(null)
   }, [remoteStream, crypto])
 
   // 同步存：用 ref 立即可读，避免下一拍渲染前事件处理器看不到流；同时驱动渲染
@@ -125,49 +135,62 @@ export default function HomePage() {
     return pc
   }, [emit, resetToHome])
 
-  // Initiator: listen for peer-joined
+  // 发起方在双方 SAS 都已确认后才真正建 PC、采流、发 offer
+  const startInitiatorWebRTC = useCallback(async () => {
+    if (!sharedKeyRef.current) return
+    const resolvedMode = callModeRef.current
+    setView('connecting')
+    const pc = setupPeerConnection()
+    try {
+      let stream = localStreamRef.current
+      if (!stream) {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: resolvedMode === 'video' })
+        storeLocalStream(stream)
+      } else if (resolvedMode === 'video' && stream.getVideoTracks().length === 0) {
+        const videoOnly = await navigator.mediaDevices.getUserMedia({ video: true })
+        videoOnly.getVideoTracks().forEach(t => stream!.addTrack(t))
+        storeLocalStream(stream)
+      }
+      stream.getTracks().forEach(track => pc.addTrack(track, stream!))
+
+      const offer = await pc.createOffer()
+      await pc.setLocalDescription(offer)
+      const encrypted = encrypt(JSON.stringify({ type: offer.type, sdp: offer.sdp }), sharedKeyRef.current)
+      emit('relay-offer', { roomId: roomIdRef.current, sdp: encrypted })
+    } catch (e) {
+      console.error('[webrtc] offer error', e)
+      resetToHome(mediaErrorReason(e, callModeRef.current))
+    }
+  }, [setupPeerConnection, storeLocalStream, emit, resetToHome])
+
+  // Initiator: listen for peer-joined — derive key, compute SAS, show verify view
   useEffect(() => {
-    const off = on('peer-joined', async ({ pubKeyB, callMode: remoteMode }: any) => {
+    const off = on('peer-joined', ({ pubKeyB, callMode: remoteMode, symbolsB }) => {
       if (!crypto.publicKeyB64.current) return
-      const shared = crypto.deriveSharedKey(pubKeyB)
+      let shared: Uint8Array
+      try {
+        shared = crypto.deriveSharedKey(pubKeyB)
+      } catch (e) {
+        console.error('[verify] bad pubKeyB from peer', e)
+        return resetToHome('对端公钥无效，已断开')
+      }
       sharedKeyRef.current = shared
 
       const resolvedMode: CallMode = remoteMode === 'video' ? 'video' : 'audio'
       callModeRef.current = resolvedMode
       setCallMode(resolvedMode)
-      // 对方已加入，进入"正在建立连接"过渡视图，提供清晰反馈
-      setView('connecting')
-
-      const pc = setupPeerConnection()
-
-      try {
-        // 优先复用 handleInvite 阶段预授权拿到的流；只在对方选视频且本地还没有摄像头轨道时补取摄像头。
-        let stream = localStreamRef.current
-        if (!stream) {
-          stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: resolvedMode === 'video' })
-          storeLocalStream(stream)
-        } else if (resolvedMode === 'video' && stream.getVideoTracks().length === 0) {
-          const videoOnly = await navigator.mediaDevices.getUserMedia({ video: true })
-          videoOnly.getVideoTracks().forEach(t => stream!.addTrack(t))
-          storeLocalStream(stream)
-        }
-        stream.getTracks().forEach(track => pc.addTrack(track, stream!))
-
-        const offer = await pc.createOffer()
-        await pc.setLocalDescription(offer)
-        const encrypted = encrypt(JSON.stringify({ type: offer.type, sdp: offer.sdp }), shared)
-        emit('relay-offer', { roomId: roomIdRef.current, sdp: encrypted })
-      } catch (e) {
-        console.error('[webrtc] offer error', e)
-        resetToHome(mediaErrorReason(e, resolvedMode))
-      }
+      setSasEmoji(computeSAS(shared))
+      setLocalFingerprintOK(false)
+      setPeerFingerprintOK(false)
+      setPeerSymbol(symbolsB)        // A 在 verifying 阶段核对的暗语
+      setView('verifying')
     })
     return () => off()
-  }, [on, crypto, setupPeerConnection, emit, resetToHome])
+  }, [on, crypto, resetToHome])
 
   // Acceptor: listen for offer
   useEffect(() => {
-    const off = on('offer', async ({ sdp: encryptedSdp }: any) => {
+    const off = on('offer', async ({ sdp: encryptedSdp }) => {
       if (!sharedKeyRef.current) return
       try {
         const pc = setupPeerConnection()
@@ -201,7 +224,7 @@ export default function HomePage() {
 
   // Listen for answer
   useEffect(() => {
-    const off = on('answer', async ({ sdp: encryptedSdp }: any) => {
+    const off = on('answer', async ({ sdp: encryptedSdp }) => {
       if (!sharedKeyRef.current || !peerConnectionRef.current) return
       try {
         const answerStr = decrypt(encryptedSdp, sharedKeyRef.current)
@@ -216,7 +239,7 @@ export default function HomePage() {
 
   // Listen for ICE candidates
   useEffect(() => {
-    const off = on('ice-candidate', async ({ candidate: encryptedCandidate }: any) => {
+    const off = on('ice-candidate', async ({ candidate: encryptedCandidate }) => {
       if (!sharedKeyRef.current || !peerConnectionRef.current) return
       try {
         const candidateStr = decrypt(encryptedCandidate, sharedKeyRef.current)
@@ -229,11 +252,40 @@ export default function HomePage() {
     return () => off()
   }, [on])
 
+  // Listen for the remote SAS confirmation
+  useEffect(() => {
+    const off = on('peer-verify-confirmed', () => {
+      setPeerFingerprintOK(true)
+    })
+    return () => off()
+  }, [on])
+
+  // When BOTH sides confirm SAS, initiator starts WebRTC; acceptor just waits for offer
+  useEffect(() => {
+    if (view !== 'verifying') return
+    if (!localFingerprintOK || !peerFingerprintOK) return
+    if (isInitiatorRef.current) {
+      void startInitiatorWebRTC()
+    } else {
+      setView('connecting')  // wait for the offer to arrive on the existing listener
+    }
+  }, [view, localFingerprintOK, peerFingerprintOK, startInitiatorWebRTC])
+
+  const handleConfirmFingerprint = useCallback(() => {
+    if (localFingerprintOK) return
+    setLocalFingerprintOK(true)
+    emit('verify-confirm', { roomId: roomIdRef.current })
+  }, [emit, localFingerprintOK])
+
+  const handleRejectFingerprint = useCallback(() => {
+    resetToHome('密钥指纹不一致，已挂断')
+  }, [resetToHome])
+
   // Listen for peer hangup
   useEffect(() => {
     const off = on('peer-hung-up', () => {
       // 通话尚未真正建立时被中断，提示用户原因；通话中正常挂断不打扰
-      const wasConnecting = viewRef.current === 'connecting' || viewRef.current === 'waiting'
+      const wasConnecting = viewRef.current === 'connecting' || viewRef.current === 'waiting' || viewRef.current === 'verifying'
       cleanup()
       setView('home')
       setRoomId('')
@@ -264,7 +316,6 @@ export default function HomePage() {
     const pubKey = crypto.generateKeys()
     roomIdRef.current = newRoomId
     isInitiatorRef.current = true
-    setIsInitiator(true)
     setRoomId(newRoomId)
     setSymbolString(symbols)
     emit('create-room', { roomId: newRoomId, symbols, pubKeyA: pubKey })
@@ -297,10 +348,18 @@ export default function HomePage() {
 
     crypto.generateKeys()
 
-    const offInfo = on('room-info', ({ symbols, pubKeyA }: any) => {
+    const offInfo = on('room-info', ({ symbols, pubKeyA }) => {
       clearTimeout(timer)
-      const shared = crypto.deriveSharedKey(pubKeyA)
-      sharedKeyRef.current = shared
+      try {
+        const shared = crypto.deriveSharedKey(pubKeyA)
+        sharedKeyRef.current = shared
+      } catch (e) {
+        console.error('[lookup] bad pubKeyA from server', e)
+        setJoinStatus('not-found')
+        offInfo()
+        offNotFound()
+        return
+      }
       setJoinedSymbol(symbols)
       setJoinStatus('found')
       offInfo()
@@ -324,16 +383,15 @@ export default function HomePage() {
     emit('lookup-room', { roomId: code })
   }, [crypto, on, emit])
 
-  const handleAccept = useCallback(async (mode: CallMode) => {
-    // 先同步设置 ref，再异步更新 state——保证 offer 到达时能读到正确模式
+  const handleAccept = useCallback(async (mode: CallMode, symbolsB: string) => {
     callModeRef.current = mode
     setCallMode(mode)
     isInitiatorRef.current = false
     const pubKey = crypto.publicKeyB64.current
-    if (!pubKey) return
+    const shared = sharedKeyRef.current  // 已在 handleLookup 阶段算好
+    if (!pubKey || !shared) return
 
-    // 预授权：在用户点击手势中拿权限，权限被拒就停在 join 视图给出可操作的提示，
-    // 不发 join-room，发起方不会被卷入。
+    // 预授权：在用户点击手势中拿权限
     let stream: MediaStream
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: mode === 'video' })
@@ -344,10 +402,14 @@ export default function HomePage() {
     }
     storeLocalStream(stream)
 
-    emit('join-room', { roomId: roomIdRef.current, pubKeyB: pubKey, callMode: mode })
-    // 立即切到"正在建立连接"视图：点击有反馈、按钮不会被重复触发
-    setView('connecting')
-  }, [crypto, emit, storeLocalStream])
+    emit('join-room', { roomId: roomIdRef.current, pubKeyB: pubKey, callMode: mode, symbolsB })
+    // 进入 SAS 对码视图：B 已经能算指纹；并把对端（A）的暗语带到这里给 B 核对
+    setPeerSymbol(joinedSymbol)
+    setSasEmoji(computeSAS(shared))
+    setLocalFingerprintOK(false)
+    setPeerFingerprintOK(false)
+    setView('verifying')
+  }, [crypto, emit, storeLocalStream, joinedSymbol])
 
   const handleHangup = useCallback(() => {
     emit('hangup', { roomId: roomIdRef.current })
@@ -408,6 +470,60 @@ export default function HomePage() {
             </div>
           )}
 
+          {view === 'verifying' && sasEmoji && (
+            <div className="space-y-5">
+              <div className="text-center">
+                <h2 className="text-base font-semibold">核对身份与密钥</h2>
+                <p className="text-xs text-muted-foreground mt-1">
+                  通过电话/可信通讯软件，与对方口头核对暗语标志和密钥指纹是否完全一致。
+                </p>
+                <p className="text-[11px] text-muted-foreground/80 mt-1">
+                  如有任何一项不一致，说明信令通道遭中间人攻击，请拒绝。
+                </p>
+              </div>
+
+              {peerSymbol && (
+                <div className="rounded-xl border border-border bg-card py-4 px-3 text-center">
+                  <p className="text-xs text-muted-foreground uppercase tracking-widest mb-2">对方的暗语标志</p>
+                  <div className="text-4xl">{peerSymbol}</div>
+                  <p className="text-[11px] text-muted-foreground mt-2">
+                    应与你们事先约定的对方暗语一致
+                  </p>
+                </div>
+              )}
+
+              <div className="rounded-xl border border-border bg-card py-6 px-3">
+                <p className="text-xs text-muted-foreground uppercase tracking-widest text-center mb-3">密钥指纹</p>
+                <div className="flex items-center justify-center gap-3">
+                  {sasEmoji.map((e, i) => (
+                    <span key={i} className="text-5xl select-all" aria-label={`fingerprint-${i}`}>{e}</span>
+                  ))}
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-2">
+                {!localFingerprintOK ? (
+                  <button
+                    onClick={handleConfirmFingerprint}
+                    className="w-full py-3 rounded-lg bg-primary text-primary-foreground hover:opacity-90 font-medium"
+                  >
+                    ✓ 与对方一致，开始通话
+                  </button>
+                ) : (
+                  <div className="w-full py-3 rounded-lg bg-muted text-center text-sm text-muted-foreground">
+                    {peerFingerprintOK ? '双方已确认，正在建立通话…' : '等待对方确认…'}
+                  </div>
+                )}
+                <button
+                  onClick={handleRejectFingerprint}
+                  className="w-full py-2 rounded-lg border border-destructive/40 text-destructive text-sm hover:bg-destructive/10"
+                >
+                  ✕ 不一致，挂断
+                </button>
+              </div>
+            </div>
+          )}
+
           {view === 'connecting' && (
             <div className="space-y-6 text-center">
               <div className="space-y-2">
@@ -458,8 +574,8 @@ export default function HomePage() {
               )}
               <JoinPanel
                 onLookup={handleLookup}
-                onAcceptAudio={() => handleAccept('audio')}
-                onAcceptVideo={() => handleAccept('video')}
+                onAcceptAudio={(symbolsB) => handleAccept('audio', symbolsB)}
+                onAcceptVideo={(symbolsB) => handleAccept('video', symbolsB)}
                 onReject={() => {
                   emit('hangup', { roomId: roomIdRef.current })
                   setView('home')

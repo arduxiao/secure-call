@@ -3,11 +3,24 @@ import { useState } from 'react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { ROOM_CODE_ALPHABET, ROOM_CODE_LEN, isValidRoomCode } from '@/lib/roomCode'
+import { SymbolPicker } from './SymbolPicker'
+import { SymbolSelection, buildSymbolString } from '@/lib/symbols'
+
+const sanitize = (raw: string): string => {
+  const upper = raw.toUpperCase()
+  let out = ''
+  for (const ch of upper) {
+    if (ROOM_CODE_ALPHABET.includes(ch)) out += ch
+    if (out.length === ROOM_CODE_LEN) break
+  }
+  return out
+}
 
 interface JoinPanelProps {
   onLookup: (roomId: string) => void
-  onAcceptAudio: () => void
-  onAcceptVideo: () => void
+  onAcceptAudio: (symbolsB: string) => void
+  onAcceptVideo: (symbolsB: string) => void
   onReject: () => void
   onBack: () => void
   symbolString: string | null
@@ -26,10 +39,13 @@ export function JoinPanel({
   connected,
 }: JoinPanelProps) {
   const [roomId, setRoomId] = useState('')
+  // B 自己的暗语标志：默认值与发起方初始默认不同，提示用户主动选择
+  const [mySymbol, setMySymbol] = useState<SymbolSelection>({ shape: '○', color: '🟡', count: 2 })
+  const myStr = buildSymbolString(mySymbol.shape, mySymbol.color, mySymbol.count)
 
   const handleLookup = () => {
-    const code = roomId.trim().toUpperCase()
-    if (code.length >= 6) onLookup(code)
+    const code = sanitize(roomId)
+    if (isValidRoomCode(code)) onLookup(code)
   }
 
   return (
@@ -56,17 +72,17 @@ export function JoinPanel({
       <div className="space-y-2">
         <div className="flex gap-2">
           <Input
-            placeholder="输入 8 位房间码"
+            placeholder={`输入 ${ROOM_CODE_LEN} 位房间码`}
             value={roomId}
-            onChange={e => setRoomId(e.target.value.toUpperCase())}
+            onChange={e => setRoomId(sanitize(e.target.value))}
             onKeyDown={e => e.key === 'Enter' && handleLookup()}
             className="font-mono tracking-widest text-center text-lg"
-            maxLength={8}
+            maxLength={ROOM_CODE_LEN}
             disabled={status === 'looking' || status === 'found'}
           />
           <Button
             onClick={handleLookup}
-            disabled={roomId.length < 6 || status === 'looking' || status === 'found' || !connected}
+            disabled={roomId.length !== ROOM_CODE_LEN || status === 'looking' || status === 'found' || !connected}
           >
             {status === 'looking' ? '查询中…' : '查询'}
           </Button>
@@ -85,18 +101,28 @@ export function JoinPanel({
           <CardContent className="pt-6 space-y-6">
             <div className="text-center space-y-2">
               <p className="text-xs text-muted-foreground uppercase tracking-widest">对方的暗语标志</p>
-              <div className="text-6xl py-4">{symbolString}</div>
-              <p className="text-sm text-muted-foreground">
-                根据你们事先的约定识别此标志，再决定是否接听
+              <div className="text-5xl py-3">{symbolString}</div>
+              <p className="text-xs text-muted-foreground">
+                根据你们事先的约定识别此标志
               </p>
             </div>
 
+            <div className="border-t border-border pt-4 space-y-3">
+              <div className="text-center space-y-1">
+                <p className="text-xs text-muted-foreground uppercase tracking-widest">你的暗语标志</p>
+                <p className="text-xs text-muted-foreground">
+                  选好之后，对方会在确认环节看到此标志
+                </p>
+              </div>
+              <SymbolPicker value={mySymbol} onChange={setMySymbol} />
+            </div>
+
             <div className="grid grid-cols-3 gap-2">
-              <Button variant="outline" onClick={onAcceptAudio} className="flex-col h-auto py-3 gap-1">
+              <Button variant="outline" onClick={() => onAcceptAudio(myStr)} className="flex-col h-auto py-3 gap-1">
                 <span className="text-lg">🎧</span>
                 <span className="text-xs">仅音频</span>
               </Button>
-              <Button onClick={onAcceptVideo} className="flex-col h-auto py-3 gap-1">
+              <Button onClick={() => onAcceptVideo(myStr)} className="flex-col h-auto py-3 gap-1">
                 <span className="text-lg">📹</span>
                 <span className="text-xs">视频通话</span>
               </Button>

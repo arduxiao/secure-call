@@ -1,6 +1,10 @@
 'use client'
 import { useEffect, useRef, useCallback, useState } from 'react'
 import { io, Socket } from 'socket.io-client'
+import type { ServerEvents } from '@/lib/protocol'
+
+type ServerEventName = keyof ServerEvents
+type Handler<K extends ServerEventName> = (payload: ServerEvents[K]) => void
 
 export function useSignaling() {
   const socketRef = useRef<Socket | null>(null)
@@ -39,10 +43,12 @@ export function useSignaling() {
     }
   }, [])
 
-  const on = useCallback((event: string, handler: (...args: unknown[]) => void) => {
-    socketRef.current?.on(event, handler)
+  const on = useCallback(<K extends ServerEventName>(event: K, handler: Handler<K>) => {
+    // socket.io's typings widen the handler to (...args: any[]); we narrow at the call site.
+    const wrapped = (payload: ServerEvents[K]) => handler(payload)
+    socketRef.current?.on(event as string, wrapped as (...args: unknown[]) => void)
     return () => {
-      socketRef.current?.off(event, handler)
+      socketRef.current?.off(event as string, wrapped as (...args: unknown[]) => void)
     }
   }, [])
 
@@ -54,5 +60,5 @@ export function useSignaling() {
     }
   }, [])
 
-  return { emit, on, off, socket: socketRef, connected }
+  return { emit, on, off, connected }
 }

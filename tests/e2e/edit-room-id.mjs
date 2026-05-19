@@ -90,6 +90,12 @@ async function run() {
 
   // Complete the call — proves the rebuilt room actually carries the same crypto identity.
   await pageB.getByRole('button', { name: '仅音频' }).click()
+  await Promise.all([
+    pageA.getByText('核对身份与密钥').waitFor({ state: 'visible', timeout: 10_000 }),
+    pageB.getByText('核对身份与密钥').waitFor({ state: 'visible', timeout: 10_000 }),
+  ])
+  await pageA.getByRole('button', { name: /与对方一致/ }).click()
+  await pageB.getByRole('button', { name: /与对方一致/ }).click()
   const inCall = () => document.body.innerText.includes('语音通话中')
   await Promise.all([
     pageA.waitForFunction(inCall, { timeout: 20_000 }),

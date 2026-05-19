@@ -1,5 +1,6 @@
 export interface Room {
-  symbols?: string
+  symbols?: string      // A 的暗语
+  symbolsB?: string     // B 的暗语（join-room 时由 B 提交）
   pubKeyA?: string
   pubKeyB?: string
   socketA: string
