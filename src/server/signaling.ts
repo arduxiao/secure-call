@@ -120,6 +120,16 @@ function isStr(v: unknown, max: number, re?: RegExp): v is string {
 }
 
 export function registerSignalingHandlers(io: Server) {
+  // Helper: reset the relay-byte budget for a participant once their call ends.
+  // Without this, a single socket that completes multiple back-to-back calls
+  // keeps accumulating bytes and eventually trips the MAX_RELAY_TOTAL_BYTES
+  // safety cap mid-conversation in a later call.
+  const resetRelayBudget = (sockId: string | undefined) => {
+    if (!sockId) return
+    const s = io.sockets.sockets.get(sockId)
+    if (s) socketStateFor(s).relayBytes = 0
+  }
+
   io.on('connection', (socket: Socket) => {
     // ---- [1] A creates room ----
     socket.on('create-room', (payload: unknown) => {
@@ -288,6 +298,10 @@ export function registerSignalingHandlers(io: Server) {
         if (room.socketA !== socket.id && room.socketB !== socket.id) return
         const otherSocket = room.socketA === socket.id ? room.socketB : room.socketA
         if (otherSocket) io.to(otherSocket).emit('peer-hung-up')
+        // The call is over for everyone in this room — clear both peers'
+        // accumulated relay-byte counters so the next call starts fresh.
+        resetRelayBudget(room.socketA)
+        resetRelayBudget(room.socketB)
         rooms.delete(roomId)
         console.log(`[signaling] room deleted: ${roomId} (total: ${rooms.size})`)
       } catch (e) {
@@ -301,6 +315,10 @@ export function registerSignalingHandlers(io: Server) {
         if (room.socketA === socket.id || room.socketB === socket.id) {
           const otherSocket = room.socketA === socket.id ? room.socketB : room.socketA
           if (otherSocket) io.to(otherSocket).emit('peer-hung-up')
+          // Disconnecting socket's WeakMap entry will GC, but the surviving peer
+          // (still connected) needs its relay-byte counter cleared so the next
+          // call they make starts with a fresh budget.
+          resetRelayBudget(otherSocket)
           rooms.delete(roomId)
           console.log(`[signaling] room cleaned on disconnect: ${roomId}`)
         }
