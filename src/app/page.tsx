@@ -494,9 +494,9 @@ export default function HomePage() {
 
               <div className="rounded-xl border border-border bg-card py-6 px-3">
                 <p className="text-xs text-muted-foreground uppercase tracking-widest text-center mb-3">密钥指纹</p>
-                <div className="flex items-center justify-center gap-3">
+                <div className="flex items-center justify-center gap-2 flex-wrap">
                   {sasEmoji.map((e, i) => (
-                    <span key={i} className="text-5xl select-all" aria-label={`fingerprint-${i}`}>{e}</span>
+                    <span key={i} className="text-4xl select-all" aria-label={`fingerprint-${i}`}>{e}</span>
                   ))}
                 </div>
               </div>

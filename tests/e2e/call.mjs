@@ -112,14 +112,19 @@ async function main() {
     pageB.getByText('核对身份与密钥').waitFor({ state: 'visible', timeout: 10_000 }),
   ])
   // Sanity: SAS must match across A and B (4 emoji span elements).
+  // SAS length is intentionally not pinned here — we only assert (a) both sides
+  // show at least 4 emoji and (b) the two sides agree. That keeps this test
+  // robust to entropy bumps (v1=4 emoji, v2=6 emoji, …).
   const sasOf = (page) => page.evaluate(() => {
+    // numeric-sorted by index, e.g. fingerprint-0..fingerprint-5
     return Array.from(document.querySelectorAll('[aria-label^="fingerprint-"]'))
-      .sort((a, b) => a.getAttribute('aria-label').localeCompare(b.getAttribute('aria-label')))
+      .sort((a, b) => Number(a.getAttribute('aria-label').replace(/^fingerprint-/, '')) -
+                      Number(b.getAttribute('aria-label').replace(/^fingerprint-/, '')))
       .map(el => el.textContent.trim())
   })
   const [sasA, sasB] = await Promise.all([sasOf(pageA), sasOf(pageB)])
   log('main', `SAS A=${sasA.join('')}  B=${sasB.join('')}`)
-  if (sasA.length !== 4 || sasB.length !== 4 || sasA.join('') !== sasB.join('')) {
+  if (sasA.length < 4 || sasB.length < 4 || sasA.join('') !== sasB.join('')) {
     throw new Error(`SAS mismatch: A=${sasA.join('')} B=${sasB.join('')}`)
   }
   log('main', 'click ✓ 一致 on both peers')

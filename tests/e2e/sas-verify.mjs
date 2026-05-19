@@ -21,8 +21,10 @@ async function readRoomCode(page) {
 
 async function sasOf(page) {
   return page.evaluate(() => {
+    // Numeric sort so fingerprint-10 doesn't land between fingerprint-1 and fingerprint-2.
     return Array.from(document.querySelectorAll('[aria-label^="fingerprint-"]'))
-      .sort((a, b) => a.getAttribute('aria-label').localeCompare(b.getAttribute('aria-label')))
+      .sort((a, b) => Number(a.getAttribute('aria-label').replace(/^fingerprint-/, '')) -
+                      Number(b.getAttribute('aria-label').replace(/^fingerprint-/, '')))
       .map(el => el.textContent.trim())
   })
 }
@@ -66,7 +68,7 @@ async function scenarioMatch(browser) {
   const { ctxA, ctxB, pageA, pageB } = await bootstrapCall(browser)
   const [sasA, sasB] = await Promise.all([sasOf(pageA), sasOf(pageB)])
   log('S1', `SAS A=${sasA.join('')}  B=${sasB.join('')}`)
-  if (sasA.length !== 4 || sasB.length !== 4 || sasA.join('') !== sasB.join('')) {
+  if (sasA.length < 4 || sasB.length < 4 || sasA.join('') !== sasB.join('')) {
     throw new Error(`SAS mismatch: A=${sasA.join('')} B=${sasB.join('')}`)
   }
   await pageA.getByRole('button', { name: /与对方一致/ }).click()
