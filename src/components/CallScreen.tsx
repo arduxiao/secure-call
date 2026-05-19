@@ -12,6 +12,9 @@ interface CallScreenProps {
 export function CallScreen({ localStream, remoteStream, hasVideo, onHangup }: CallScreenProps) {
   const localVideoRef = useRef<HTMLVideoElement>(null)
   const remoteVideoRef = useRef<HTMLVideoElement>(null)
+  // 纯音频通话时，视频元素不渲染，需要单独的 audio 元素播放对端音轨——
+  // 否则 WebRTC 握手成功也听不见对方。
+  const remoteAudioRef = useRef<HTMLAudioElement>(null)
   const [isMuted, setIsMuted] = useState(false)
   const [isCameraOff, setIsCameraOff] = useState(false)
   const [duration, setDuration] = useState(0)
@@ -30,6 +33,9 @@ export function CallScreen({ localStream, remoteStream, hasVideo, onHangup }: Ca
   useEffect(() => {
     if (remoteVideoRef.current && remoteStream) {
       remoteVideoRef.current.srcObject = remoteStream
+    }
+    if (remoteAudioRef.current && remoteStream) {
+      remoteAudioRef.current.srcObject = remoteStream
     }
   }, [remoteStream])
 
@@ -79,6 +85,7 @@ export function CallScreen({ localStream, remoteStream, hasVideo, onHangup }: Ca
         </>
       ) : (
         <div className="flex-1 flex flex-col items-center justify-center gap-4">
+          <audio ref={remoteAudioRef} autoPlay playsInline />
           <div className="relative">
             <div className="w-24 h-24 rounded-full bg-primary/20 flex items-center justify-center animate-pulse">
               <div className="w-16 h-16 rounded-full bg-primary/40 flex items-center justify-center">
