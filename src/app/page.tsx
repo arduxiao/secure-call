@@ -279,6 +279,18 @@ export default function HomePage() {
     setSymbolString('')
   }, [emit, cleanup])
 
+  const handleEditRoomId = useCallback((nextRoomId: string) => {
+    // 发起方改房间码：先挂断旧房间让服务器删除条目，再用同一对密钥在新 id 上重建房间。
+    // 保持密钥不变意味着对方若已经查询过旧码、再用新码查询会得到一致的共享密钥。
+    const prev = roomIdRef.current
+    const pubKey = crypto.publicKeyB64.current
+    if (!prev || !pubKey || nextRoomId === prev) return
+    emit('hangup', { roomId: prev })
+    roomIdRef.current = nextRoomId
+    setRoomId(nextRoomId)
+    emit('create-room', { roomId: nextRoomId, symbols: symbolString, pubKeyA: pubKey })
+  }, [crypto, emit, symbolString])
+
   const handleLookup = useCallback((code: string) => {
     setJoinStatus('looking')
     roomIdRef.current = code
@@ -426,6 +438,7 @@ export default function HomePage() {
               roomId={roomId}
               symbolString={symbolString}
               onCancel={handleCancelInvite}
+              onEditRoomId={handleEditRoomId}
             />
           )}
 

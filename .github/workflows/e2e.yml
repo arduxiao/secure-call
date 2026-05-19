@@ -63,6 +63,9 @@ jobs:
       - name: Run permission-denied test
         run: npm run test:e2e:perm
 
+      - name: Run edit-room-id test
+        run: npm run test:e2e:edit
+
       - name: Stop server
         if: always()
         run: |

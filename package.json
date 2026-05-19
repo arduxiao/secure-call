@@ -13,7 +13,8 @@
     "test:e2e:audio": "node tests/e2e/call.mjs audio",
     "test:e2e:video": "node tests/e2e/call.mjs video",
     "test:e2e:perm": "node tests/e2e/permission-denied.mjs",
-    "test:e2e": "npm run test:e2e:audio && npm run test:e2e:video && npm run test:e2e:perm"
+    "test:e2e:edit": "node tests/e2e/edit-room-id.mjs",
+    "test:e2e": "npm run test:e2e:audio && npm run test:e2e:video && npm run test:e2e:perm && npm run test:e2e:edit"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",
