@@ -9,21 +9,34 @@ import { rooms, Room } from './roomManager'
 // audio+video SDP and ICE candidate fit comfortably, then 4× margin.
 // ─────────────────────────────────────────────────────────────────────────────
 const ROOMID_LEN = 8
-const MAX_SYMBOLS_LEN = 64            // emoji string A picks; 4 emojis × ~10 bytes each ≈ 40
-const PUBKEY_B64_LEN = 44             // X25519 pubkey is 32 bytes → 44 char base64 with '='
+const MAX_SYMBOLS_LEN = 16            // tight: 1-3 shape chars + space + 1 color emoji (2 UTF-16 units) ≤ 6 code units
+const PUBKEY_BYTES = 32               // X25519 raw public key length
 const MAX_SDP_LEN = 64 * 1024         // 64 KB encrypted SDP (full audio+video SDP is ~3-5KB plaintext)
 const MAX_ICE_LEN = 4 * 1024          // 4 KB encrypted ICE candidate
 const MAX_RELAY_TOTAL_BYTES = MAX_SDP_LEN * 4  // hard ceiling across one call
+const MAX_ROOMS = 5000                // global cap on concurrent rooms — defends against memory growth
 
 // Crockford-ish base32 — must mirror src/lib/roomCode.ts ROOM_CODE_ALPHABET.
 const ROOMID_RE = /^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{8}$/
 const PUBKEY_RE = /^[A-Za-z0-9+/]{43}=$/        // 32-byte base64 always ends in single '='
-const SYMBOL_RE = /^[\p{Any}]{1,64}$/u          // accept any printable unicode; length-capped
+// Closed-set symbol: one of the 5 shape glyphs repeated 1-3× then space then one
+// of the 4 color emoji. Backreference \1 forces all repeats to be the SAME shape.
+// Matches whatever buildSymbolString() in src/lib/symbols.ts can produce, and
+// rejects control chars / RTL overrides / zero-width chars used for UI spoofing.
+const SYMBOL_RE = /^([△○□◇✦])\1{0,2} [🟢🟡🟠🔴]$/u
+
+// Defense-in-depth: confirm the base64 actually decodes to a 32-byte payload.
+// The regex above already pins length & alphabet, but decode-check catches the
+// rare case where padding/character interaction produces a different byte count.
+function isPubKey(v: unknown): v is string {
+  return typeof v === 'string' && PUBKEY_RE.test(v) && Buffer.from(v, 'base64').length === PUBKEY_BYTES
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Per-socket rate limits — token bucket per event family. Numbers picked so a
+// Rate limits — token bucket per event family, keyed BY CLIENT IP (not socket)
+// so the obvious bypass "open many sockets" doesn't work. Numbers picked so a
 // legitimate user has plenty of headroom (lookup retry, ICE trickle) but a
-// flooder gets disconnected fast.
+// flooder gets throttled fast.
 // ─────────────────────────────────────────────────────────────────────────────
 interface Bucket { tokens: number; lastRefill: number; capacity: number; refillPerSec: number }
 
@@ -52,22 +65,53 @@ function spend(b: Bucket): boolean {
   return true
 }
 
-interface SocketState { buckets: Record<LimitKey, Bucket>; relayBytes: number }
+// Client IP. Render (and most PaaS) put the real client IP into X-Forwarded-For;
+// the first comma-separated entry is the client, the rest are proxies. If no
+// XFF header (direct connect), fall back to the socket's remote address.
+function clientIP(socket: Socket): string {
+  const xff = socket.handshake.headers['x-forwarded-for']
+  const first = (typeof xff === 'string' ? xff : Array.isArray(xff) ? xff[0] : undefined)?.split(',')[0]?.trim()
+  return first || socket.handshake.address || 'unknown'
+}
+
+// Per-IP rate-limit bucket pool. GC'd on a timer below so we don't grow forever.
+interface IPState { buckets: Record<LimitKey, Bucket>; lastSeen: number }
+const ipState = new Map<string, IPState>()
+
+function ipStateFor(socket: Socket): IPState {
+  const ip = clientIP(socket)
+  let s = ipState.get(ip)
+  if (!s) { s = { buckets: makeBuckets(), lastSeen: Date.now() }; ipState.set(ip, s) }
+  s.lastSeen = Date.now()
+  return s
+}
+
+// Per-socket relay-byte accounting: a single socket can only push so much
+// encrypted payload through us before we cut them off. Kept separate from the
+// per-IP bucket because legitimate users may run multiple back-to-back calls.
+interface SocketState { relayBytes: number }
 const socketState = new WeakMap<Socket, SocketState>()
 
-function stateFor(socket: Socket): SocketState {
+function socketStateFor(socket: Socket): SocketState {
   let s = socketState.get(socket)
-  if (!s) { s = { buckets: makeBuckets(), relayBytes: 0 }; socketState.set(socket, s) }
+  if (!s) { s = { relayBytes: 0 }; socketState.set(socket, s) }
   return s
 }
 
 function gate(socket: Socket, key: LimitKey): boolean {
-  if (!spend(stateFor(socket).buckets[key])) {
+  if (!spend(ipStateFor(socket).buckets[key])) {
     socket.emit('rate-limited', { event: key })
     return false
   }
   return true
 }
+
+// Sweep stale IP entries every 5 min; drop anything idle > 30 min so the Map
+// doesn't accumulate indefinitely from one-off visitors.
+setInterval(() => {
+  const cutoff = Date.now() - 30 * 60 * 1000
+  for (const [ip, st] of ipState) if (st.lastSeen < cutoff) ipState.delete(ip)
+}, 5 * 60 * 1000).unref?.()
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -84,8 +128,12 @@ export function registerSignalingHandlers(io: Server) {
         const { roomId, symbols, pubKeyA } = (payload || {}) as Record<string, unknown>
         if (!isStr(roomId, ROOMID_LEN, ROOMID_RE)) return socket.emit('error', { message: 'bad-room-id' })
         if (!isStr(symbols, MAX_SYMBOLS_LEN, SYMBOL_RE)) return socket.emit('error', { message: 'bad-symbols' })
-        if (!isStr(pubKeyA, PUBKEY_B64_LEN, PUBKEY_RE)) return socket.emit('error', { message: 'bad-pubkey' })
+        if (!isPubKey(pubKeyA)) return socket.emit('error', { message: 'bad-pubkey' })
 
+        if (rooms.size >= MAX_ROOMS) {
+          console.warn(`[signaling] capacity hit: rooms=${rooms.size} >= ${MAX_ROOMS}`)
+          return socket.emit('error', { message: 'capacity' })
+        }
         if (rooms.has(roomId)) {
           socket.emit('error', { message: 'room-exists' })
           return
@@ -135,7 +183,7 @@ export function registerSignalingHandlers(io: Server) {
         if (!gate(socket, 'join')) return
         const { roomId, pubKeyB, callMode, symbolsB } = (payload || {}) as Record<string, unknown>
         if (!isStr(roomId, ROOMID_LEN, ROOMID_RE)) return socket.emit('room-not-found')
-        if (!isStr(pubKeyB, PUBKEY_B64_LEN, PUBKEY_RE)) return socket.emit('error', { message: 'bad-pubkey' })
+        if (!isPubKey(pubKeyB)) return socket.emit('error', { message: 'bad-pubkey' })
         if (!isStr(symbolsB, MAX_SYMBOLS_LEN, SYMBOL_RE)) return socket.emit('error', { message: 'bad-symbols' })
         const mode = callMode === 'video' ? 'video' : 'audio'
 
@@ -157,6 +205,15 @@ export function registerSignalingHandlers(io: Server) {
     })
 
     // ---- [4] Relay encrypted WebRTC Offer / Answer / ICE ----
+    //
+    // Sender-role enforcement:
+    //   • relay-offer  MUST come from socketA (only A creates the offer)
+    //   • relay-answer MUST come from socketB (only B sends the answer back)
+    //   • relay-ice    MAY come from either; direction is derived from socket.id,
+    //     not from a client-supplied `fromA` flag (which was trivially forgeable).
+    //
+    // This closes the "B forges an answer back to A" attack the second-round audit
+    // flagged. Anything that doesn't match the expected role is dropped silently.
     const relayHelper = (
       key: LimitKey,
       payloadKey: 'sdp' | 'candidate',
@@ -169,26 +226,31 @@ export function registerSignalingHandlers(io: Server) {
           const obj = (payload || {}) as Record<string, unknown>
           const roomId = obj.roomId
           const blob = obj[payloadKey]
-          const fromA = obj.fromA
           if (!isStr(roomId, ROOMID_LEN, ROOMID_RE)) return
           if (typeof blob !== 'string' || blob.length === 0 || blob.length > maxLen) return
 
-          const st = stateFor(socket)
+          const room = rooms.get(roomId)
+          if (!room) return
+          // Caller must actually be a participant of this room.
+          const isA = socket.id === room.socketA
+          const isB = socket.id === room.socketB
+          if (!isA && !isB) return
+
+          // Role gating per event kind.
+          if (forwardEvent === 'offer'  && !isA) return
+          if (forwardEvent === 'answer' && !isB) return
+
+          const st = socketStateFor(socket)
           st.relayBytes += blob.length
           if (st.relayBytes > MAX_RELAY_TOTAL_BYTES) {
             console.warn(`[signaling] relay-cap hit, disconnect ${socket.id}`)
             return socket.disconnect(true)
           }
 
-          const room = rooms.get(roomId)
-          if (!room) return
-          // Only the room's participants may relay through it.
-          if (room.socketA !== socket.id && room.socketB !== socket.id) return
-
           let target: string | undefined
           if (forwardEvent === 'offer') target = room.socketB
           else if (forwardEvent === 'answer') target = room.socketA
-          else target = fromA ? room.socketB : room.socketA
+          else target = isA ? room.socketB : room.socketA  // ICE: send to the other end
           if (target) io.to(target).emit(forwardEvent, { [payloadKey]: blob } as Record<string, string>)
         } catch (e) {
           console.error(`[signaling] relay handler error`, e)

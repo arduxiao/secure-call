@@ -260,6 +260,31 @@ export default function HomePage() {
     return () => off()
   }, [on])
 
+  // Surface server-side rate-limits and rejections as the same error toast.
+  // Without this the user sees a button click that silently does nothing.
+  useEffect(() => {
+    const offRL = on('rate-limited', ({ event }) => {
+      console.warn('[signaling] rate-limited:', event)
+      setErrorMessage(`请求过于频繁（${event}），请稍后再试`)
+    })
+    const offErr = on('error', (payload) => {
+      // Server-emitted business errors carry { message: '...' }. Anything else
+      // (e.g. socket.io transport-level 'error' with a different shape) is ignored.
+      const code = (payload as { message?: string } | undefined)?.message
+      if (!code) return
+      console.warn('[signaling] server error:', code)
+      const human: Record<string, string> = {
+        'capacity':       '服务器房间已满，请稍后再试',
+        'room-exists':    '该房间码已被占用，请换一个',
+        'bad-room-id':    '房间码格式不正确',
+        'bad-symbols':    '暗语标志格式不正确',
+        'bad-pubkey':     '密钥格式不正确',
+      }
+      setErrorMessage(human[code] ?? `服务器拒绝请求：${code}`)
+    })
+    return () => { offRL(); offErr() }
+  }, [on])
+
   // When BOTH sides confirm SAS, initiator starts WebRTC; acceptor just waits for offer
   useEffect(() => {
     if (view !== 'verifying') return
