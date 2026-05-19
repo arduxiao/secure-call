@@ -16,10 +16,14 @@ export function useSignaling() {
     // 客户端会连到不存在的域名并被 CORS 拦截。
     const socketUrl = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000'
 
+    // No auto-reconnect: Socket.IO's reconnect would mint a fresh socket.id on the
+    // server side, leaving the existing room's socketA/socketB stale and unreachable.
+    // Without a server-side rebind protocol that's worse than just dropping the call
+    // honestly. page.tsx watches the `connected` flag and resets active call views
+    // when this flips to false.
     const socket = io(socketUrl, {
       transports: ['polling', 'websocket'],
-      reconnectionAttempts: 10,
-      reconnectionDelay: 1000,
+      reconnection: false,
     })
 
     socketRef.current = socket

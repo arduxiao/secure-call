@@ -260,6 +260,22 @@ export default function HomePage() {
     return () => off()
   }, [on])
 
+  // Honest behaviour when the signalling socket drops mid-handshake:
+  //   • waiting / verifying / connecting views NEED the relay → reset to home
+  //   • call view is media-only at this point (ICE done) → leave alone
+  //   • home / join views → nothing to do
+  // Skips the very first render where `connected` is false simply because the
+  // socket hasn't finished connecting yet.
+  const hadConnectedRef = useRef(false)
+  useEffect(() => {
+    if (connected) { hadConnectedRef.current = true; return }
+    if (!hadConnectedRef.current) return
+    const v = viewRef.current
+    if (v === 'waiting' || v === 'verifying' || v === 'connecting') {
+      resetToHome('网络连接已断开，请重新发起通话')
+    }
+  }, [connected, resetToHome])
+
   // Surface server-side rate-limits and rejections as the same error toast.
   // Without this the user sees a button click that silently does nothing.
   useEffect(() => {
