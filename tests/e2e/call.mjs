@@ -128,8 +128,8 @@ async function main() {
     throw new Error(`SAS mismatch: A=${sasA.join('')} B=${sasB.join('')}`)
   }
   log('main', 'click ✓ 一致 on both peers')
-  await pageA.getByRole('button', { name: /与对方一致/ }).click()
-  await pageB.getByRole('button', { name: /与对方一致/ }).click()
+  await pageA.getByRole('button', { name: /指纹一致/ }).click()
+  await pageB.getByRole('button', { name: /指纹一致/ }).click()
 
   log('main', `waiting for both peers to enter the ${MODE} call view…`)
   const probeSrc = inCallProbe(MODE).toString()

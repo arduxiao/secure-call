@@ -521,27 +521,18 @@ export default function HomePage() {
           {view === 'verifying' && sasEmoji && (
             <div className="space-y-5">
               <div className="text-center">
-                <h2 className="text-base font-semibold">核对身份与密钥</h2>
+                <h2 className="text-base font-semibold">核对密钥指纹</h2>
                 <p className="text-xs text-muted-foreground mt-1">
-                  通过电话/可信通讯软件，与对方口头核对暗语标志和密钥指纹是否完全一致。
+                  通过电话/可信通讯软件，与对方口头核对下方 {sasEmoji.length} 个图案是否完全一致。
                 </p>
                 <p className="text-[11px] text-muted-foreground/80 mt-1">
-                  如有任何一项不一致，说明信令通道遭中间人攻击，请拒绝。
+                  指纹由双方公钥经 ECDH 独立计算得到，是抗中间人的数学证据。<strong>如不一致，必定是中间人攻击，请拒绝。</strong>
                 </p>
               </div>
 
-              {peerSymbol && (
-                <div className="rounded-xl border border-border bg-card py-4 px-3 text-center">
-                  <p className="text-xs text-muted-foreground uppercase tracking-widest mb-2">对方的暗语标志</p>
-                  <div className="text-4xl">{peerSymbol}</div>
-                  <p className="text-[11px] text-muted-foreground mt-2">
-                    应与你们事先约定的对方暗语一致
-                  </p>
-                </div>
-              )}
-
-              <div className="rounded-xl border border-border bg-card py-6 px-3">
-                <p className="text-xs text-muted-foreground uppercase tracking-widest text-center mb-3">密钥指纹</p>
+              {/* SAS — primary defense, visually prominent */}
+              <div className="rounded-xl border-2 border-primary/40 bg-card py-6 px-3">
+                <p className="text-xs text-primary uppercase tracking-widest text-center mb-3">密钥指纹 · 最终防线</p>
                 <div className="flex items-center justify-center gap-2 flex-wrap">
                   {sasEmoji.map((e, i) => (
                     <span key={i} className="text-4xl select-all" aria-label={`fingerprint-${i}`}>{e}</span>
@@ -549,13 +540,25 @@ export default function HomePage() {
                 </div>
               </div>
 
+              {/* Symbol — secondary identity hint, server-passthrough — explicitly de-emphasized */}
+              {peerSymbol && (
+                <div className="rounded-xl border border-dashed border-border bg-muted/30 py-3 px-3 text-center">
+                  <p className="text-[11px] text-muted-foreground uppercase tracking-widest mb-1">对方的暗语标志 · 辅助识别</p>
+                  <div className="text-3xl py-1">{peerSymbol}</div>
+                  <p className="text-[10px] text-muted-foreground/80 mt-1 leading-snug px-2">
+                    暗语经服务器中转，恶意服务器可保留原值同时仍 MITM——<br />
+                    所以暗语相符不能单独证明安全，最终判断请以上方指纹为准。
+                  </p>
+                </div>
+              )}
+
               <div className="flex flex-col gap-2">
                 {!localFingerprintOK ? (
                   <button
                     onClick={handleConfirmFingerprint}
                     className="w-full py-3 rounded-lg bg-primary text-primary-foreground hover:opacity-90 font-medium"
                   >
-                    ✓ 与对方一致，开始通话
+                    ✓ 指纹一致，开始通话
                   </button>
                 ) : (
                   <div className="w-full py-3 rounded-lg bg-muted text-center text-sm text-muted-foreground">
@@ -566,7 +569,7 @@ export default function HomePage() {
                   onClick={handleRejectFingerprint}
                   className="w-full py-2 rounded-lg border border-destructive/40 text-destructive text-sm hover:bg-destructive/10"
                 >
-                  ✕ 不一致，挂断
+                  ✕ 指纹不一致，挂断
                 </button>
               </div>
             </div>

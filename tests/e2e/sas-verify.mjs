@@ -71,8 +71,8 @@ async function scenarioMatch(browser) {
   if (sasA.length < 4 || sasB.length < 4 || sasA.join('') !== sasB.join('')) {
     throw new Error(`SAS mismatch: A=${sasA.join('')} B=${sasB.join('')}`)
   }
-  await pageA.getByRole('button', { name: /与对方一致/ }).click()
-  await pageB.getByRole('button', { name: /与对方一致/ }).click()
+  await pageA.getByRole('button', { name: /指纹一致/ }).click()
+  await pageB.getByRole('button', { name: /指纹一致/ }).click()
 
   const inCall = () => document.body.innerText.includes('语音通话中')
   await Promise.all([
