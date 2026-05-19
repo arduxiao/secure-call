@@ -11,6 +11,27 @@ const dev = process.env.NODE_ENV !== 'production'
 const app = next({ dev })
 const handle = app.getRequestHandler()
 
+// Resolve allowed CORS origins ONCE at startup so misconfig fails fast.
+// Priority:
+//   1. ALLOWED_ORIGIN env (comma-separated for staging/preview deploys)
+//   2. RENDER_EXTERNAL_URL — auto-injected by Render so prod "just works"
+// If neither is set in production, refuse to start.
+function resolveAllowedOrigins(): Set<string> {
+  const raw = (process.env.ALLOWED_ORIGIN ?? '').split(',').map(s => s.trim()).filter(Boolean)
+  const fromRender = process.env.RENDER_EXTERNAL_URL?.trim()
+  const set = new Set<string>(raw)
+  if (fromRender) set.add(fromRender)
+  return set
+}
+const ALLOWED_ORIGINS = resolveAllowedOrigins()
+
+if (!dev && ALLOWED_ORIGINS.size === 0) {
+  console.error('[server] FATAL: NODE_ENV=production but neither ALLOWED_ORIGIN nor RENDER_EXTERNAL_URL is set. Refusing to start.')
+  console.error('[server] Set ALLOWED_ORIGIN=https://your-domain in render.yaml or env, or rely on Render\'s RENDER_EXTERNAL_URL.')
+  process.exit(1)
+}
+console.log(`[server] CORS allow-list: ${dev ? '(dev: localhost + ' : '('}${[...ALLOWED_ORIGINS].join(', ') || '∅'})`)
+
 console.log('[server] Calling app.prepare()...')
 
 app.prepare().then(() => {
@@ -21,13 +42,11 @@ app.prepare().then(() => {
     handle(req, res, parsedUrl)
   })
 
-  // Same-origin only: in production we set ALLOWED_ORIGIN to the deploy URL
-  // (e.g. https://secure-call-kn0h.onrender.com). Locally we allow http://localhost:*.
-  // A missing/wildcard config is rejected so prod can't accidentally re-open CORS.
-  const allowedOrigin = process.env.ALLOWED_ORIGIN
+  // Same-origin only. Allow-list built at startup (see resolveAllowedOrigins above).
+  // Dev mode additionally accepts http(s)://localhost or 127.0.0.1 on any port.
   const corsOrigin = (origin: string | undefined, cb: (err: Error | null, allow?: boolean) => void) => {
-    if (!origin) return cb(null, true)  // same-origin or non-browser requests
-    if (allowedOrigin && origin === allowedOrigin) return cb(null, true)
+    if (!origin) return cb(null, true)  // same-origin or non-browser request (no Origin header)
+    if (ALLOWED_ORIGINS.has(origin)) return cb(null, true)
     if (dev && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) return cb(null, true)
     return cb(new Error(`Origin ${origin} not allowed`))
   }

@@ -11,3 +11,7 @@ services:
         value: production
       - key: PORT
         value: 3000
+      # Signaling CORS allow-list. Server also accepts RENDER_EXTERNAL_URL automatically,
+      # so this is defense-in-depth. Use a comma-separated list to add staging/preview origins.
+      - key: ALLOWED_ORIGIN
+        value: https://secure-call-kn0h.onrender.com
