@@ -40,3 +40,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Claude Code session transcripts (auto-generated, not part of the repo)
+工作日志_*.txt
