@@ -1,0 +1,87 @@
+name: e2e
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        id: playwright-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Install Chromium (with system deps)
+        run: npx playwright install --with-deps chromium
+
+      - name: Start dev server
+        # Dev mode matches what the e2e tests are validated against locally; HMR is harmless to the tests.
+        run: |
+          PORT=3000 npm run dev > /tmp/server.log 2>&1 &
+          echo $! > /tmp/server.pid
+
+      - name: Wait for server
+        run: |
+          for i in $(seq 1 90); do
+            if curl -fs http://localhost:3000/ > /dev/null; then
+              echo "server up after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "server failed to start within 90s"
+          cat /tmp/server.log || true
+          exit 1
+
+      - name: Run audio call test
+        run: npm run test:e2e:audio
+
+      - name: Run video call test
+        run: npm run test:e2e:video
+
+      - name: Run permission-denied test
+        run: npm run test:e2e:perm
+
+      - name: Stop server
+        if: always()
+        run: |
+          if [ -f /tmp/server.pid ]; then
+            kill "$(cat /tmp/server.pid)" 2>/dev/null || true
+          fi
+
+      - name: Upload server log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-log
+          path: /tmp/server.log
+          if-no-files-found: ignore
+
+      - name: Upload failure screenshots
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: failure-screenshots
+          path: /tmp/fail-*.png
+          if-no-files-found: ignore
