@@ -36,7 +36,14 @@ export default function HomePage() {
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null)
   const sharedKeyRef = useRef<Uint8Array | null>(null)
   const roomIdRef = useRef('')
+  // 双轨：state 驱动 JSX 渲染，ref 给异步事件处理器同步读。
+  // 翻转角色时务必走 setRole 同时更新两边——只动一边就是 N10 的复发风险。
+  const [isInitiator, setIsInitiator] = useState(false)
   const isInitiatorRef = useRef(false)
+  const setRole = useCallback((next: boolean) => {
+    isInitiatorRef.current = next
+    setIsInitiator(next)
+  }, [])
   // 同步可读的 callMode，避免 setCallMode 异步导致 offer 处理器读到旧值
   const callModeRef = useRef<CallMode>('audio')
   // 同步可读的 view，避免异步事件处理器读到旧值
@@ -84,10 +91,10 @@ export default function HomePage() {
     setJoinStatus('idle')
     setJoinedSymbol(null)
     roomIdRef.current = ''
-    isInitiatorRef.current = false
+    setRole(false)
     if (reason) setErrorMessage(reason)
     if (currentRoomId) emit('hangup', { roomId: currentRoomId })
-  }, [cleanup, emit])
+  }, [cleanup, emit, setRole])
 
   const mediaErrorReason = (e: unknown, mode: CallMode = 'audio'): string => {
     const name = (e as { name?: string })?.name
@@ -334,11 +341,11 @@ export default function HomePage() {
       setJoinStatus('idle')
       setJoinedSymbol(null)
       roomIdRef.current = ''
-      isInitiatorRef.current = false
+      setRole(false)
       if (wasConnecting) setErrorMessage('对方已取消或离开')
     })
     return () => off()
-  }, [on, cleanup])
+  }, [on, cleanup, setRole])
 
   const handleInvite = useCallback(async (newRoomId: string, symbols: string) => {
     // 预授权麦克风：在用户的点击手势中弹权限提示，避免对方加入后才弹、用户已离开页面而被拒。
@@ -356,12 +363,12 @@ export default function HomePage() {
 
     const pubKey = crypto.generateKeys()
     roomIdRef.current = newRoomId
-    isInitiatorRef.current = true
+    setRole(true)
     setRoomId(newRoomId)
     setSymbolString(symbols)
     emit('create-room', { roomId: newRoomId, symbols, pubKeyA: pubKey })
     setView('waiting')
-  }, [crypto, emit, storeLocalStream])
+  }, [crypto, emit, storeLocalStream, setRole])
 
   const handleCancelInvite = useCallback(() => {
     emit('hangup', { roomId: roomIdRef.current })
@@ -427,7 +434,7 @@ export default function HomePage() {
   const handleAccept = useCallback(async (mode: CallMode, symbolsB: string) => {
     callModeRef.current = mode
     setCallMode(mode)
-    isInitiatorRef.current = false
+    setRole(false)
     const pubKey = crypto.publicKeyB64.current
     const shared = sharedKeyRef.current  // 已在 handleLookup 阶段算好
     if (!pubKey || !shared) return
@@ -450,7 +457,7 @@ export default function HomePage() {
     setLocalFingerprintOK(false)
     setPeerFingerprintOK(false)
     setView('verifying')
-  }, [crypto, emit, storeLocalStream, joinedSymbol])
+  }, [crypto, emit, storeLocalStream, joinedSymbol, setRole])
 
   const handleHangup = useCallback(() => {
     emit('hangup', { roomId: roomIdRef.current })
@@ -569,7 +576,7 @@ export default function HomePage() {
             <div className="space-y-6 text-center">
               <div className="space-y-2">
                 <div className="text-xs text-muted-foreground uppercase tracking-widest">
-                  {isInitiatorRef.current ? '对方已加入' : '已接听'}
+                  {isInitiator ? '对方已加入' : '已接听'}
                 </div>
                 <div className="text-lg font-medium">正在建立加密通话…</div>
               </div>
